@@ -15,6 +15,7 @@ import {
 } from "@nestjs/swagger";
 import { AuthGuard } from "@nestjs/passport";
 import { PortfolioService } from "./portfolio.service";
+import { SectorWeightingService } from "./sector-weighting.service";
 
 @ApiTags("Portfolio")
 @Controller("portfolio")
@@ -24,14 +25,20 @@ export class PortfolioController {
   private static readonly UUID_REGEX =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  constructor(private readonly portfolioService: PortfolioService) {}
+  constructor(
+    private readonly portfolioService: PortfolioService,
+    private readonly sectorWeightingService: SectorWeightingService,
+  ) {}
 
-  private parseAccountIds(accountIds?: string): string[] | undefined {
-    if (!accountIds) return undefined;
-    const ids = accountIds.split(",").filter(Boolean);
+  private parseUuidList(
+    csv: string | undefined,
+    label: string,
+  ): string[] | undefined {
+    if (!csv) return undefined;
+    const ids = csv.split(",").filter(Boolean);
     for (const id of ids) {
       if (!PortfolioController.UUID_REGEX.test(id)) {
-        throw new BadRequestException(`Invalid account UUID: ${id}`);
+        throw new BadRequestException(`Invalid ${label} UUID: ${id}`);
       }
     }
     return ids;
@@ -53,7 +60,7 @@ export class PortfolioController {
   })
   @ApiResponse({ status: 401, description: "Unauthorized" })
   getSummary(@Request() req, @Query("accountIds") accountIds?: string) {
-    const ids = this.parseAccountIds(accountIds);
+    const ids = this.parseUuidList(accountIds, "account");
     return this.portfolioService.getPortfolioSummary(req.user.id, ids);
   }
 
@@ -73,7 +80,7 @@ export class PortfolioController {
   })
   @ApiResponse({ status: 401, description: "Unauthorized" })
   getAllocation(@Request() req, @Query("accountIds") accountIds?: string) {
-    const ids = this.parseAccountIds(accountIds);
+    const ids = this.parseUuidList(accountIds, "account");
     return this.portfolioService.getAssetAllocation(req.user.id, ids);
   }
 
@@ -101,5 +108,38 @@ export class PortfolioController {
   @ApiResponse({ status: 401, description: "Unauthorized" })
   getInvestmentAccounts(@Request() req) {
     return this.portfolioService.getInvestmentAccounts(req.user.id);
+  }
+
+  @Get("sector-weightings")
+  @ApiOperation({
+    summary: "Get sector weightings breakdown for investment portfolio",
+  })
+  @ApiQuery({
+    name: "accountIds",
+    required: false,
+    description: "Comma-separated account IDs to filter by",
+  })
+  @ApiQuery({
+    name: "securityIds",
+    required: false,
+    description: "Comma-separated security IDs to filter by",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Sector weightings retrieved successfully",
+  })
+  @ApiResponse({ status: 401, description: "Unauthorized" })
+  getSectorWeightings(
+    @Request() req,
+    @Query("accountIds") accountIds?: string,
+    @Query("securityIds") securityIds?: string,
+  ) {
+    const aIds = this.parseUuidList(accountIds, "account");
+    const sIds = this.parseUuidList(securityIds, "security");
+    return this.sectorWeightingService.getSectorWeightings(
+      req.user.id,
+      aIds,
+      sIds,
+    );
   }
 }
