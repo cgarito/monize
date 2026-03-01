@@ -124,19 +124,26 @@ export function GeographicAllocationReport() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAccountFilter]);
 
+  // Fetch accounts and securities once on mount (static data)
+  useEffect(() => {
+    Promise.all([
+      investmentsApi.getInvestmentAccounts(),
+      investmentsApi.getSecurities(),
+    ])
+      .then(([accountsData, securitiesData]) => {
+        setAccounts(accountsData);
+        setSecurities(securitiesData);
+      })
+      .catch((error) => logger.error('Failed to load static data:', error));
+  }, []);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [accountsData, summaryData, securitiesData] = await Promise.all([
-        investmentsApi.getInvestmentAccounts(),
-        investmentsApi.getPortfolioSummary(
-          selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
-        ),
-        investmentsApi.getSecurities(),
-      ]);
-      setAccounts(accountsData);
+      const summaryData = await investmentsApi.getPortfolioSummary(
+        selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
+      );
       setHoldings(summaryData.holdings);
-      setSecurities(securitiesData);
     } catch (error) {
       logger.error('Failed to load data:', error);
     } finally {

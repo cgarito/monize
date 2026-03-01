@@ -87,16 +87,19 @@ export function SecurityTypeAllocationReport() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAccountFilter]);
 
+  // Fetch accounts once on mount
+  useEffect(() => {
+    investmentsApi.getInvestmentAccounts()
+      .then(setAccounts)
+      .catch((error) => logger.error('Failed to load accounts:', error));
+  }, []);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [accountsData, summaryData] = await Promise.all([
-        investmentsApi.getInvestmentAccounts(),
-        investmentsApi.getPortfolioSummary(
-          selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
-        ),
-      ]);
-      setAccounts(accountsData);
+      const summaryData = await investmentsApi.getPortfolioSummary(
+        selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
+      );
       setHoldings(summaryData.holdings);
     } catch (error) {
       logger.error('Failed to load data:', error);
@@ -123,12 +126,14 @@ export function SecurityTypeAllocationReport() {
       const marketValue = h.marketValue ?? 0;
       const converted = convertToDefault(marketValue, h.currencyCode);
 
-      const existing = typeMap.get(type) || { totalValue: 0, count: 0, holdings: [] };
-      typeMap.set(type, {
-        totalValue: existing.totalValue + converted,
-        count: existing.count + 1,
-        holdings: [...existing.holdings, h],
-      });
+      let existing = typeMap.get(type);
+      if (!existing) {
+        existing = { totalValue: 0, count: 0, holdings: [] };
+        typeMap.set(type, existing);
+      }
+      existing.totalValue += converted;
+      existing.count += 1;
+      existing.holdings.push(h);
     });
 
     const totalValue = Array.from(typeMap.values()).reduce((sum, v) => sum + v.totalValue, 0);

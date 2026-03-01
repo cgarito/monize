@@ -85,16 +85,19 @@ export function CurrencyExposureReport() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAccountFilter]);
 
+  // Fetch accounts once on mount
+  useEffect(() => {
+    investmentsApi.getInvestmentAccounts()
+      .then(setAccounts)
+      .catch((error) => logger.error('Failed to load accounts:', error));
+  }, []);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [accountsData, summaryData] = await Promise.all([
-        investmentsApi.getInvestmentAccounts(),
-        investmentsApi.getPortfolioSummary(
-          selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
-        ),
-      ]);
-      setAccounts(accountsData);
+      const summaryData = await investmentsApi.getPortfolioSummary(
+        selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
+      );
       setHoldings(summaryData.holdings);
     } catch (error) {
       logger.error('Failed to load data:', error);

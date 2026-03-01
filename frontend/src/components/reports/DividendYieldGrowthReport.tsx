@@ -4,16 +4,13 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BarChart,
   Bar,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from 'recharts';
-import { format, subYears, parseISO } from 'date-fns';
+import { subYears } from 'date-fns';
 import { investmentsApi } from '@/lib/investments';
 import { InvestmentTransaction, HoldingWithMarketValue } from '@/types/investment';
 import { Account } from '@/types/account';
@@ -23,6 +20,8 @@ import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('DividendYieldGrowthReport');
+
+const MAX_PAGES = 50;
 
 interface SecurityYield {
   symbol: string;
@@ -91,39 +90,47 @@ export function DividendYieldGrowthReport() {
     return formatCurrencyFull(value);
   }, [displayCurrency, defaultCurrency, formatCurrencyFull]);
 
+  // Fetch accounts once on mount (they don't change with filters)
+  useEffect(() => {
+    investmentsApi.getInvestmentAccounts()
+      .then(setAccounts)
+      .catch((error) => logger.error('Failed to load accounts:', error));
+  }, []);
+
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
       try {
-        const [accountsData, summaryData] = await Promise.all([
-          investmentsApi.getInvestmentAccounts(),
+        const accountIds = selectedAccountId || undefined;
+
+        const fetchAllPages = async (action: string): Promise<InvestmentTransaction[]> => {
+          const results: InvestmentTransaction[] = [];
+          let page = 1;
+          let hasMore = true;
+          while (hasMore && page <= MAX_PAGES) {
+            const result = await investmentsApi.getTransactions({
+              accountIds,
+              action,
+              limit: 200,
+              page,
+            });
+            results.push(...result.data);
+            hasMore = result.pagination.hasMore;
+            page++;
+          }
+          return results;
+        };
+
+        const [summaryData, dividendTx, reinvestTx] = await Promise.all([
           investmentsApi.getPortfolioSummary(
             selectedAccountId ? [selectedAccountId] : undefined,
           ),
+          fetchAllPages('DIVIDEND'),
+          fetchAllPages('REINVEST'),
         ]);
 
-        // Fetch all dividend transactions (no date filter for growth analysis)
-        let allTransactions: InvestmentTransaction[] = [];
-        let page = 1;
-        let hasMore = true;
-        while (hasMore) {
-          const result = await investmentsApi.getTransactions({
-            accountIds: selectedAccountId || undefined,
-            limit: 200,
-            page,
-          });
-          allTransactions = allTransactions.concat(result.data);
-          hasMore = result.pagination.hasMore;
-          page++;
-        }
-
-        const dividendTransactions = allTransactions.filter(
-          (tx) => tx.action === 'DIVIDEND' || tx.action === 'REINVEST',
-        );
-
-        setTransactions(dividendTransactions);
+        setTransactions([...dividendTx, ...reinvestTx]);
         setHoldings(summaryData.holdings);
-        setAccounts(accountsData);
       } catch (error) {
         logger.error('Failed to load data:', error);
       } finally {
@@ -157,11 +164,13 @@ export function DividendYieldGrowthReport() {
     const dividendMap = new Map<string, { total: number; dates: Date[] }>();
     recentTx.forEach((tx) => {
       const key = tx.securityId || 'unknown';
-      const existing = dividendMap.get(key) || { total: 0, dates: [] };
-      dividendMap.set(key, {
-        total: existing.total + getTxAmount(tx),
-        dates: [...existing.dates, parseLocalDate(tx.transactionDate)],
-      });
+      let existing = dividendMap.get(key);
+      if (!existing) {
+        existing = { total: 0, dates: [] };
+        dividendMap.set(key, existing);
+      }
+      existing.total += getTxAmount(tx);
+      existing.dates.push(parseLocalDate(tx.transactionDate));
     });
 
     // Map holdings to yields

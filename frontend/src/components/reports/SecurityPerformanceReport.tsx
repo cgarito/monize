@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   AreaChart,
   Area,
@@ -14,13 +14,14 @@ import {
 import { format, differenceInDays } from 'date-fns';
 import { investmentsApi } from '@/lib/investments';
 import { Security, SecurityPrice, InvestmentTransaction, HoldingWithMarketValue } from '@/types/investment';
-import { Account } from '@/types/account';
 import { parseLocalDate } from '@/lib/utils';
 import { useNumberFormat } from '@/hooks/useNumberFormat';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('SecurityPerformanceReport');
+
+const MAX_PAGES = 50;
 
 interface PriceChartPoint {
   date: string;
@@ -32,7 +33,7 @@ interface PriceChartPoint {
 
 export function SecurityPerformanceReport() {
   const { formatCurrency: formatCurrencyFull, formatCurrencyAxis } = useNumberFormat();
-  const { defaultCurrency, convertToDefault } = useExchangeRates();
+  const { defaultCurrency } = useExchangeRates();
   const [securities, setSecurities] = useState<Security[]>([]);
   const [selectedSecurityId, setSelectedSecurityId] = useState<string>('');
   const [prices, setPrices] = useState<SecurityPrice[]>([]);
@@ -61,6 +62,8 @@ export function SecurityPerformanceReport() {
     load();
   }, []);
 
+  const selectedSecurity = securities.find((s) => s.id === selectedSecurityId);
+
   // Load detail when security selected
   useEffect(() => {
     if (!selectedSecurityId) {
@@ -69,26 +72,30 @@ export function SecurityPerformanceReport() {
       return;
     }
 
+    const symbol = securities.find((s) => s.id === selectedSecurityId)?.symbol;
+    if (!symbol) return;
+
     const loadDetail = async () => {
       setIsLoadingDetail(true);
       try {
-        const [priceData, txResult] = await Promise.all([
+        const allTx: InvestmentTransaction[] = [];
+
+        const [priceData, firstPage] = await Promise.all([
           investmentsApi.getSecurityPrices(selectedSecurityId, 1095),
-          investmentsApi.getTransactions({ symbol: selectedSecurity?.symbol, limit: 200 }),
+          investmentsApi.getTransactions({ symbol, limit: 200 }),
         ]);
         setPrices(priceData);
 
-        // Paginate all transactions
-        let allTx = txResult.data;
+        allTx.push(...firstPage.data);
         let page = 2;
-        let hasMore = txResult.pagination.hasMore;
-        while (hasMore) {
+        let hasMore = firstPage.pagination.hasMore;
+        while (hasMore && page <= MAX_PAGES) {
           const nextPage = await investmentsApi.getTransactions({
-            symbol: selectedSecurity?.symbol,
+            symbol,
             limit: 200,
             page,
           });
-          allTx = allTx.concat(nextPage.data);
+          allTx.push(...nextPage.data);
           hasMore = nextPage.pagination.hasMore;
           page++;
         }
@@ -100,9 +107,7 @@ export function SecurityPerformanceReport() {
       }
     };
     loadDetail();
-  }, [selectedSecurityId]);
-
-  const selectedSecurity = securities.find((s) => s.id === selectedSecurityId);
+  }, [selectedSecurityId, securities]);
   const selectedHolding = holdings.find((h) => h.securityId === selectedSecurityId);
 
   // Performance stats

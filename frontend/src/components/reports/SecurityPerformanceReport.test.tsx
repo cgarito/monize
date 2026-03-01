@@ -4,7 +4,7 @@ import { SecurityPerformanceReport } from './SecurityPerformanceReport';
 
 vi.mock('@/hooks/useNumberFormat', () => ({
   useNumberFormat: () => ({
-    formatCurrency: (n: number, c?: string) => `$${n.toFixed(2)}`,
+    formatCurrency: (n: number) => `$${n.toFixed(2)}`,
     formatCurrencyCompact: (n: number) => `$${n.toFixed(0)}`,
     formatCurrencyAxis: (n: number) => `$${n}`,
   }),

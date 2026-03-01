@@ -5,7 +5,7 @@ import { CurrencyExposureReport } from './CurrencyExposureReport';
 vi.mock('@/hooks/useNumberFormat', () => ({
   useNumberFormat: () => ({
     formatCurrencyCompact: (n: number) => `$${n.toFixed(0)}`,
-    formatCurrency: (n: number, c?: string) => `$${n.toFixed(2)}`,
+    formatCurrency: (n: number) => `$${n.toFixed(2)}`,
   }),
 }));
 
