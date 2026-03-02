@@ -1,6 +1,5 @@
 import {
   IsString,
-  Length,
   Matches,
   IsBoolean,
   IsOptional,
@@ -14,14 +13,19 @@ export class VerifyTotpDto {
   @MaxLength(2048)
   tempToken: string;
 
-  @ApiProperty({ description: "6-digit TOTP code from authenticator app" })
+  @ApiProperty({
+    description:
+      "6-digit TOTP code from authenticator app or XXXX-XXXX backup code",
+  })
   @IsString()
-  @Length(6, 6)
-  @Matches(/^\d{6}$/, { message: "Code must be exactly 6 digits" })
+  @MaxLength(9)
+  @Matches(/^(\d{6}|[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4})$/, {
+    message: "Code must be a 6-digit TOTP code or a backup code (XXXX-XXXX)",
+  })
   code: string;
 
   @ApiProperty({
-    description: "Remember this device and skip 2FA for 30 days",
+    description: "Remember this device and skip 2FA for 14 days",
     required: false,
   })
   @IsBoolean()
