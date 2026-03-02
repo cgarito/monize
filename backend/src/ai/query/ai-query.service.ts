@@ -11,6 +11,24 @@ import { sanitizeToolResultStrings } from "../context/prompt-sanitize";
 
 const MAX_ITERATIONS = 5;
 
+/** LLM04-F1: Maximum total tool calls per query across all iterations. */
+const MAX_TOOL_CALLS = 15;
+
+/**
+ * LLM04-F2: Overall query timeout in milliseconds.
+ * This is independent of the per-provider timeout (e.g., Ollama's 10-min timeout).
+ * The Ollama provider timeout remains untouched so scheduled tasks
+ * (insights/forecasts) that call the provider directly can still use the
+ * full provider timeout window.
+ */
+const QUERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+/** LLM04-F3: Maximum cumulative input tokens before aborting the query. */
+const MAX_INPUT_TOKENS = 200_000;
+
+/** LLM08-F2: Maximum size of a single tool result message in characters. */
+const MAX_TOOL_RESULT_CHARS = 50_000;
+
 export interface QueryResult {
   answer: string;
   toolsUsed: Array<{ name: string; summary: string }>;
@@ -147,6 +165,42 @@ export class AiQueryService {
     let totalToolCalls = 0;
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      // LLM04-F2: Enforce overall query timeout
+      if (Date.now() - startTime > QUERY_TIMEOUT_MS) {
+        this.logger.warn(
+          `Query timeout reached for user ${userId} after ${iteration} iterations`,
+        );
+        yield {
+          type: "content",
+          text: "Your query took too long to process. Here is what I found so far.",
+        };
+        break;
+      }
+
+      // LLM04-F1: Enforce per-query tool call budget
+      if (totalToolCalls >= MAX_TOOL_CALLS) {
+        this.logger.warn(
+          `Tool call budget exhausted for user ${userId} (${totalToolCalls} calls)`,
+        );
+        yield {
+          type: "content",
+          text: "I've reached the maximum number of data lookups for this query. Here is what I found so far.",
+        };
+        break;
+      }
+
+      // LLM04-F3: Enforce token budget
+      if (totalInputTokens >= MAX_INPUT_TOKENS) {
+        this.logger.warn(
+          `Token budget exhausted for user ${userId} (${totalInputTokens} input tokens)`,
+        );
+        yield {
+          type: "content",
+          text: "This query has consumed the maximum analysis budget. Here is what I found so far.",
+        };
+        break;
+      }
+
       let response;
       try {
         response = await provider.completeWithTools!(
@@ -241,11 +295,18 @@ export class AiQueryService {
 
         // Add tool result message with sanitized string values
         const sanitizedData = sanitizeToolResultStrings(result.data);
+        // LLM08-F2: Truncate oversized tool results to prevent context bloat
+        let toolResultContent = JSON.stringify(sanitizedData);
+        if (toolResultContent.length > MAX_TOOL_RESULT_CHARS) {
+          toolResultContent =
+            toolResultContent.substring(0, MAX_TOOL_RESULT_CHARS) +
+            '... [truncated, data too large]"';
+        }
         const toolResultMessage: AiMessage = {
           role: "tool",
           toolCallId: toolCall.id,
           name: toolCall.name,
-          content: JSON.stringify(sanitizedData),
+          content: toolResultContent,
         };
         messages.push(toolResultMessage);
       }

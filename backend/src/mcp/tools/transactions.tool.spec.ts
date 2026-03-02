@@ -203,6 +203,62 @@ describe("McpTransactionsTools", () => {
       expect(parsed.message).toContain("preview");
     });
 
+    it("should strip HTML from payeeName and description (LLM07-F3)", async () => {
+      resolve.mockReturnValue({ userId: "u1", scopes: "read,write" });
+      accountsService.findOne.mockResolvedValue({ currencyCode: "USD" });
+      transactionsService.create.mockResolvedValue({
+        id: "t1",
+        transactionDate: "2025-01-15",
+        amount: -50,
+        payeeName: "script alert XSS /script",
+        status: "pending",
+      });
+
+      await handlers["create_transaction"](
+        {
+          accountId: "a1",
+          amount: -50,
+          date: "2025-01-15",
+          payeeName: "<script>alert('XSS')</script>",
+          description: "Purchase at <b>Store</b>",
+          dryRun: false,
+        },
+        { sessionId: "s1" },
+      );
+
+      expect(transactionsService.create).toHaveBeenCalledWith(
+        "u1",
+        expect.objectContaining({
+          payeeName: "scriptalert('XSS')/script",
+          description: "Purchase at bStore/b",
+        }),
+      );
+    });
+
+    it("should strip HTML in dry-run preview (LLM07-F3)", async () => {
+      resolve.mockReturnValue({ userId: "u1", scopes: "read,write" });
+      accountsService.findOne.mockResolvedValue({
+        name: "Checking",
+        currencyCode: "USD",
+      });
+
+      const result = await handlers["create_transaction"](
+        {
+          accountId: "a1",
+          amount: -50,
+          date: "2025-01-15",
+          payeeName: "<img src=x>",
+          description: "Test <script>",
+          dryRun: true,
+        },
+        { sessionId: "s1" },
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.preview.payeeName).toBe("img src=x");
+      expect(parsed.preview.description).toBe("Test script");
+    });
+
     it("should enforce daily write rate limit", async () => {
       resolve.mockReturnValue({ userId: "u1", scopes: "read,write" });
       accountsService.findOne.mockResolvedValue({ currencyCode: "USD" });

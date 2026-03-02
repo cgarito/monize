@@ -445,6 +445,103 @@ describe("AiQueryService", () => {
       const contentEvent = events.find((e) => e.type === "content");
       expect(contentEvent!.text).toBe("Here is your financial summary.");
     });
+
+    it("stops when tool call budget is exhausted (LLM04-F1)", async () => {
+      // Each call returns 4 tool calls to exhaust budget of 15 quickly
+      (mockProvider.completeWithTools as jest.Mock).mockResolvedValue({
+        content: "",
+        toolCalls: [
+          {
+            id: "tc-1",
+            name: "query_transactions",
+            input: { startDate: "2026-01-01", endDate: "2026-01-31" },
+          },
+          { id: "tc-2", name: "get_account_balances", input: {} },
+          {
+            id: "tc-3",
+            name: "query_transactions",
+            input: { startDate: "2026-02-01", endDate: "2026-02-28" },
+          },
+          { id: "tc-4", name: "get_account_balances", input: {} },
+        ],
+        usage: { inputTokens: 50, outputTokens: 20 },
+        model: "claude-sonnet-4-20250514",
+        provider: "anthropic",
+        stopReason: "tool_use",
+      });
+
+      const events = await collectEvents(userId, "Compare all my spending");
+
+      const contentEvent = events.find((e) => e.type === "content");
+      expect(contentEvent!.text).toContain("maximum number of data lookups");
+
+      const doneEvent = events.find((e) => e.type === "done");
+      expect(doneEvent).toBeDefined();
+    });
+
+    it("stops when input token budget is exhausted (LLM04-F3)", async () => {
+      // Return large token counts to exhaust the 200k limit
+      (mockProvider.completeWithTools as jest.Mock).mockResolvedValue({
+        content: "",
+        toolCalls: [{ id: "tc-1", name: "get_account_balances", input: {} }],
+        usage: { inputTokens: 210000, outputTokens: 20 },
+        model: "claude-sonnet-4-20250514",
+        provider: "anthropic",
+        stopReason: "tool_use",
+      });
+
+      const events = await collectEvents(userId, "Analyze everything");
+
+      // First iteration runs, second is blocked by token budget check
+      const contentEvent = events.find((e) => e.type === "content");
+      expect(contentEvent!.text).toContain("maximum analysis budget");
+
+      const doneEvent = events.find((e) => e.type === "done");
+      expect(doneEvent).toBeDefined();
+    });
+
+    it("truncates oversized tool results (LLM08-F2)", async () => {
+      // Return a very large tool result
+      const largeData: Record<string, unknown> = {};
+      for (let i = 0; i < 2000; i++) {
+        largeData[`field_${i}`] = "x".repeat(50);
+      }
+
+      mockToolExecutor.execute.mockResolvedValue({
+        data: largeData,
+        summary: "Found data",
+        sources: [{ type: "test", description: "test" }],
+      });
+
+      (mockProvider.completeWithTools as jest.Mock)
+        .mockResolvedValueOnce({
+          content: "",
+          toolCalls: [{ id: "tc-1", name: "get_account_balances", input: {} }],
+          usage: { inputTokens: 80, outputTokens: 20 },
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic",
+          stopReason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: "Here is the answer.",
+          toolCalls: [],
+          usage: { inputTokens: 200, outputTokens: 30 },
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic",
+          stopReason: "end_turn",
+        });
+
+      await collectEvents(userId, "Show all data");
+
+      // Verify the tool result message was truncated
+      const secondCallArgs = (mockProvider.completeWithTools as jest.Mock).mock
+        .calls[1][0];
+      const toolMessage = secondCallArgs.messages.find(
+        (m: Record<string, unknown>) => m.role === "tool",
+      );
+      expect(toolMessage.content.length).toBeLessThanOrEqual(50100);
+      expect(toolMessage.content).toContain("[truncated");
+    });
   });
 
   describe("executeQuery()", () => {

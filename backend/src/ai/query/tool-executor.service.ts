@@ -14,6 +14,7 @@ import {
 } from "../../budgets/budget-date.utils";
 import { Transaction } from "../../transactions/entities/transaction.entity";
 import { Category } from "../../categories/entities/category.entity";
+import { validateToolInput } from "./tool-input-schemas";
 
 /**
  * LLM06-F2: Minimum number of transactions required per group
@@ -57,22 +58,36 @@ export class ToolExecutorService {
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<ToolResult> {
+    // LLM07-F1: Validate tool input against Zod schema
+    const validation = validateToolInput(toolName, input);
+    if (!validation.success) {
+      this.logger.warn(
+        `Tool ${toolName} input validation failed: ${validation.error}`,
+      );
+      return {
+        data: { error: validation.error },
+        summary: `Invalid input for ${toolName}: ${validation.error}`,
+        sources: [],
+      };
+    }
+    const validatedInput = validation.data;
+
     try {
       switch (toolName) {
         case "query_transactions":
-          return await this.queryTransactions(userId, input);
+          return await this.queryTransactions(userId, validatedInput);
         case "get_account_balances":
-          return await this.getAccountBalances(userId, input);
+          return await this.getAccountBalances(userId, validatedInput);
         case "get_spending_by_category":
-          return await this.getSpendingByCategory(userId, input);
+          return await this.getSpendingByCategory(userId, validatedInput);
         case "get_income_summary":
-          return await this.getIncomeSummary(userId, input);
+          return await this.getIncomeSummary(userId, validatedInput);
         case "get_net_worth_history":
-          return await this.getNetWorthHistory(userId, input);
+          return await this.getNetWorthHistory(userId, validatedInput);
         case "compare_periods":
-          return await this.comparePeriods(userId, input);
+          return await this.comparePeriods(userId, validatedInput);
         case "get_budget_status":
-          return await this.getBudgetStatus(userId, input);
+          return await this.getBudgetStatus(userId, validatedInput);
         default:
           return {
             data: null,

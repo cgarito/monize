@@ -12,6 +12,16 @@ import {
 } from "../mcp-context";
 import { McpWriteLimiter } from "../mcp-write-limiter";
 
+/**
+ * LLM07-F3: Strip HTML angle brackets from string values.
+ * MCP tools bypass the DTO layer's @SanitizeHtml() decorator,
+ * so we apply the same sanitization inline.
+ */
+function stripHtml(value: string | undefined): string | undefined {
+  if (value === undefined || value === null) return value;
+  return value.replace(/[<>]/g, "");
+}
+
 @Injectable()
 export class McpTransactionsTools {
   private readonly writeLimiter = new McpWriteLimiter();
@@ -177,9 +187,9 @@ export class McpTransactionsTools {
                 accountName: account.name,
                 amount: args.amount,
                 date: args.date,
-                payeeName: args.payeeName || null,
+                payeeName: stripHtml(args.payeeName) || null,
                 categoryId: args.categoryId || null,
-                description: args.description || null,
+                description: stripHtml(args.description) || null,
                 currencyCode: account.currencyCode,
               },
               message:
@@ -187,15 +197,16 @@ export class McpTransactionsTools {
             });
           }
 
+          // LLM07-F3: Sanitize user-controlled strings (matches @SanitizeHtml() DTO behavior)
           const transaction = await this.transactionsService.create(
             ctx.userId,
             {
               accountId: args.accountId,
               amount: args.amount,
               transactionDate: args.date,
-              payeeName: args.payeeName,
+              payeeName: stripHtml(args.payeeName),
               categoryId: args.categoryId,
-              description: args.description,
+              description: stripHtml(args.description),
               currencyCode: account.currencyCode,
             },
           );
