@@ -13,7 +13,6 @@ import {
 import { format } from 'date-fns';
 import { netWorthApi } from '@/lib/net-worth';
 import { investmentsApi } from '@/lib/investments';
-import { MonthlyInvestmentValue } from '@/types/net-worth';
 import { PortfolioSummary } from '@/types/investment';
 import { Account } from '@/types/account';
 import { parseLocalDate } from '@/lib/utils';
@@ -24,6 +23,8 @@ import { DateRangeSelector } from '@/components/ui/DateRangeSelector';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('PortfolioValueReport');
+
+const DAILY_RANGES = new Set(['1w', '1m', '3m', 'ytd', '1y']);
 
 function CustomTooltip({ active, payload, fmtFull }: {
   active?: boolean;
@@ -45,12 +46,14 @@ function CustomTooltip({ active, payload, fmtFull }: {
 export function PortfolioValueReport() {
   const { formatCurrencyCompact, formatCurrencyAxis, formatCurrency: formatCurrencyFull } = useNumberFormat();
   const { defaultCurrency } = useExchangeRates();
-  const [monthlyData, setMonthlyData] = useState<MonthlyInvestmentValue[]>([]);
+  const [chartPoints, setChartPoints] = useState<Array<{ name: string; Value: number }>>([]);
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const { dateRange, setDateRange, resolvedRange, isValid } = useDateRange({ defaultRange: '2y', alignment: 'month' });
+
+  const useDaily = DAILY_RANGES.has(dateRange);
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
   const foreignCurrency = selectedAccount?.currencyCode && selectedAccount.currencyCode !== defaultCurrency
@@ -80,18 +83,35 @@ export function PortfolioValueReport() {
         const { start, end } = resolvedRange;
         const accountIds = selectedAccountId ? [selectedAccountId] : undefined;
 
-        const [monthlyResult, portfolioResult, accountsResult] = await Promise.all([
-          netWorthApi.getInvestmentsMonthly({
-            startDate: start,
-            endDate: end,
-            accountIds: accountIds?.join(','),
-            displayCurrency: foreignCurrency || undefined,
-          }),
+        const params = {
+          startDate: start,
+          endDate: end,
+          accountIds: accountIds?.join(','),
+          displayCurrency: foreignCurrency || undefined,
+        };
+
+        const [investmentResult, portfolioResult, accountsResult] = await Promise.all([
+          useDaily
+            ? netWorthApi.getInvestmentsDaily(params)
+            : netWorthApi.getInvestmentsMonthly(params),
           investmentsApi.getPortfolioSummary(accountIds),
           investmentsApi.getInvestmentAccounts(),
         ]);
 
-        setMonthlyData(monthlyResult);
+        if (useDaily) {
+          const dailyData = investmentResult as Array<{ date: string; value: number }>;
+          setChartPoints(dailyData.map((d) => ({
+            name: format(parseLocalDate(d.date), 'MMM d, yyyy'),
+            Value: d.value,
+          })));
+        } else {
+          const monthlyData = investmentResult as Array<{ month: string; value: number }>;
+          setChartPoints(monthlyData.map((d) => ({
+            name: format(parseLocalDate(d.month), 'MMM yyyy'),
+            Value: d.value,
+          })));
+        }
+
         setPortfolio(portfolioResult);
         setAccounts(accountsResult);
       } catch (error) {
@@ -101,38 +121,35 @@ export function PortfolioValueReport() {
       }
     };
     loadData();
-  }, [selectedAccountId, resolvedRange, isValid, foreignCurrency]);
-
-  const chartData = useMemo(() =>
-    monthlyData.map((d) => ({
-      name: format(parseLocalDate(d.month), 'MMM yyyy'),
-      Value: d.value,
-    })),
-  [monthlyData]);
+  }, [selectedAccountId, resolvedRange, isValid, foreignCurrency, useDaily]);
 
   const summary = useMemo(() => {
-    if (chartData.length === 0) return { current: 0, initial: 0, change: 0, changePercent: 0, high: 0, low: 0 };
-    const current = chartData[chartData.length - 1]?.Value || 0;
-    const initial = chartData[0]?.Value || 0;
+    if (chartPoints.length === 0) return { current: 0, initial: 0, change: 0, changePercent: 0, high: 0, low: 0 };
+    const current = chartPoints[chartPoints.length - 1]?.Value || 0;
+    const initial = chartPoints[0]?.Value || 0;
     const change = current - initial;
     const changePercent = initial !== 0 ? (change / Math.abs(initial)) * 100 : 0;
-    const values = chartData.map((d) => d.Value);
+    const values = chartPoints.map((d) => d.Value);
     const high = Math.max(...values);
     const low = Math.min(...values);
     return { current, initial, change, changePercent, high, low };
-  }, [chartData]);
+  }, [chartPoints]);
 
   const xAxisTicks = useMemo(() => {
-    if (chartData.length <= 36) return undefined;
-    return chartData
+    if (chartPoints.length <= 36) return undefined;
+    if (useDaily) {
+      const step = Math.ceil(chartPoints.length / 7);
+      return chartPoints.filter((_, i) => i % step === 0).map(d => d.name);
+    }
+    return chartPoints
       .filter((d) => d.name.startsWith('Jan '))
       .map((d) => d.name);
-  }, [chartData]);
+  }, [chartPoints, useDaily]);
 
   const yAxisDomain = useMemo(() => {
-    if (chartData.length === 0) return [0, 'auto'] as [number, 'auto'];
+    if (chartPoints.length === 0) return [0, 'auto'] as [number, 'auto'];
 
-    const values = chartData.map((d) => d.Value);
+    const values = chartPoints.map((d) => d.Value);
     const minValue = Math.min(...values);
     const maxValue = Math.max(...values);
     const range = maxValue - minValue;
@@ -146,7 +163,7 @@ export function PortfolioValueReport() {
     }
 
     return [Math.min(0, minValue), 'auto'] as [number, 'auto'];
-  }, [chartData]);
+  }, [chartPoints]);
 
   if (isLoading) {
     return (
@@ -225,14 +242,14 @@ export function PortfolioValueReport() {
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
           Portfolio Value Over Time
         </h3>
-        {chartData.length === 0 ? (
+        {chartPoints.length === 0 ? (
           <p className="text-gray-500 dark:text-gray-400 text-center py-8">
             No investment data for this period.
           </p>
         ) : (
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <AreaChart data={chartPoints} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorPortfolioValue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
@@ -245,9 +262,13 @@ export function PortfolioValueReport() {
                   tick={{ fontSize: 12 }}
                   {...(xAxisTicks ? { ticks: xAxisTicks } : {})}
                   tickFormatter={(value: string) => {
-                    if (chartData.length > 36) {
+                    if (useDaily) {
+                      const parts = value.split(', ');
+                      return parts[0] || value;
+                    }
+                    if (chartPoints.length > 36) {
                       return value.split(' ')[1] || value;
-                    } else if (chartData.length > 18) {
+                    } else if (chartPoints.length > 18) {
                       const parts = value.split(' ');
                       return parts.length === 2 ? `${parts[0]} '${parts[1].slice(2)}` : value;
                     }

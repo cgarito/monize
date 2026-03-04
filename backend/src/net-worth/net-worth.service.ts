@@ -370,6 +370,348 @@ export class NetWorthService {
       }));
   }
 
+  async getDailyInvestments(
+    userId: string,
+    startDate?: string,
+    endDate?: string,
+    accountIds?: string[],
+    displayCurrency?: string,
+  ): Promise<{ date: string; value: number }[]> {
+    const pref = await this.prefRepo.findOne({ where: { userId } });
+    const defaultCurrency = displayCurrency || pref?.defaultCurrency || "USD";
+
+    const end = endDate || new Date().toISOString().slice(0, 10);
+    const start = startDate || "1990-01-01";
+
+    let accountFilter = "";
+    const params: any[] = [userId, start, end];
+
+    if (accountIds && accountIds.length > 0) {
+      const resolvedIds = new Set<string>();
+      for (const id of accountIds) {
+        const accounts: any[] = await this.dataSource.query(
+          `SELECT id, linked_account_id FROM accounts WHERE (id = $1 OR linked_account_id = $1 OR id = (SELECT linked_account_id FROM accounts WHERE id = $1)) AND user_id = $2`,
+          [id, userId],
+        );
+        for (const a of accounts) {
+          resolvedIds.add(a.id);
+        }
+      }
+      const idArray = [...resolvedIds];
+      if (idArray.length === 0) return [];
+      const placeholders = idArray.map((_, i) => `$${i + 4}`).join(", ");
+      accountFilter = `AND a.id IN (${placeholders})`;
+      params.push(...idArray);
+    } else {
+      accountFilter = `AND (a.account_sub_type IN ('INVESTMENT_CASH', 'INVESTMENT_BROKERAGE') OR (a.account_type = 'INVESTMENT' AND a.account_sub_type IS NULL))`;
+    }
+
+    // Get investment accounts in scope
+    const investAccounts: any[] = await this.dataSource.query(
+      `SELECT a.id, a.account_type, a.account_sub_type, a.currency_code, a.opening_balance
+       FROM accounts a
+       WHERE a.user_id = $1 ${accountFilter}`,
+      params,
+    );
+
+    if (investAccounts.length === 0) return [];
+
+    const brokerageIds = investAccounts
+      .filter((a) => a.account_sub_type === "INVESTMENT_BROKERAGE")
+      .map((a) => a.id);
+    const cashIds = investAccounts
+      .filter(
+        (a) =>
+          a.account_sub_type === "INVESTMENT_CASH" ||
+          (a.account_type === "INVESTMENT" && !a.account_sub_type),
+      )
+      .map((a) => a.id);
+    // Load investment transactions up to end date for holdings replay
+    const invTxs: any[] =
+      brokerageIds.length > 0
+        ? await this.dataSource.query(
+            `SELECT account_id, security_id, action, quantity, transaction_date
+           FROM investment_transactions
+           WHERE account_id = ANY($1::UUID[])
+             AND transaction_date <= $2
+           ORDER BY transaction_date ASC`,
+            [brokerageIds, end],
+          )
+        : [];
+
+    // Collect security IDs and load prices for the date range
+    const securityIds = [
+      ...new Set(
+        invTxs.filter((t: any) => t.security_id).map((t: any) => t.security_id),
+      ),
+    ];
+
+    // Load securities to check skipPriceUpdates
+    const securities =
+      securityIds.length > 0
+        ? await this.securityRepo.findByIds(securityIds)
+        : [];
+    const securityMap = new Map(securities.map((s) => [s.id, s]));
+
+    const marketSecIds = securityIds.filter(
+      (id) => !securityMap.get(id)?.skipPriceUpdates,
+    );
+    const skipSecIds = securityIds.filter(
+      (id) => securityMap.get(id)?.skipPriceUpdates,
+    );
+
+    // Load market prices for the date range
+    const priceRows: any[] =
+      marketSecIds.length > 0
+        ? await this.dataSource.query(
+            `SELECT security_id, price_date, close_price
+           FROM security_prices
+           WHERE security_id = ANY($1::UUID[])
+             AND price_date >= ($2::DATE - INTERVAL '7 days')
+             AND price_date <= $3
+           ORDER BY security_id, price_date`,
+            [marketSecIds, start, end],
+          )
+        : [];
+
+    // Index prices by security -> sorted array of {date, price}
+    const pricesBySec = new Map<
+      string,
+      Array<{ date: string; price: number }>
+    >();
+    for (const p of priceRows) {
+      const secId = p.security_id;
+      if (!pricesBySec.has(secId)) pricesBySec.set(secId, []);
+      pricesBySec.get(secId)!.push({
+        date: this.toDateString(p.price_date),
+        price: Number(p.close_price),
+      });
+    }
+
+    // Load transaction-based prices for skipPriceUpdates securities
+    const txPriceRows: any[] =
+      skipSecIds.length > 0
+        ? await this.dataSource.query(
+            `SELECT security_id, transaction_date, price
+           FROM investment_transactions
+           WHERE security_id = ANY($1::UUID[])
+             AND action IN ('BUY', 'SELL', 'REINVEST')
+             AND price IS NOT NULL AND price > 0
+           ORDER BY security_id, transaction_date`,
+            [skipSecIds],
+          )
+        : [];
+
+    const txPricesBySec = new Map<
+      string,
+      Array<{ date: string; price: number }>
+    >();
+    for (const r of txPriceRows) {
+      const secId = r.security_id;
+      if (!txPricesBySec.has(secId)) txPricesBySec.set(secId, []);
+      txPricesBySec.get(secId)!.push({
+        date: this.toDateString(r.transaction_date),
+        price: Number(r.price),
+      });
+    }
+
+    // Load daily cash balances for INVESTMENT_CASH and standalone accounts
+    const cashBalances = new Map<string, Map<string, number>>();
+    if (cashIds.length > 0) {
+      const cashRows: any[] = await this.dataSource.query(
+        `WITH target_accounts AS (
+            SELECT id, opening_balance
+            FROM accounts WHERE id = ANY($1::UUID[])
+          ),
+          pre_period AS (
+            SELECT t.account_id, SUM(t.amount) as total
+            FROM transactions t
+            JOIN target_accounts ta ON ta.id = t.account_id
+            WHERE (t.status IS NULL OR t.status != 'VOID')
+              AND t.parent_transaction_id IS NULL
+              AND t.transaction_date < $2
+            GROUP BY t.account_id
+          ),
+          daily_tx AS (
+            SELECT t.account_id, t.transaction_date::DATE as tx_date, SUM(t.amount) as total
+            FROM transactions t
+            JOIN target_accounts ta ON ta.id = t.account_id
+            WHERE (t.status IS NULL OR t.status != 'VOID')
+              AND t.parent_transaction_id IS NULL
+              AND t.transaction_date >= $2
+              AND t.transaction_date <= $3
+            GROUP BY t.account_id, t.transaction_date::DATE
+          ),
+          account_daily AS (
+            SELECT d.dt::DATE as date, ta.id as account_id,
+              (ta.opening_balance + COALESCE(pp.total, 0) +
+                COALESCE(SUM(dtx.total) OVER (
+                  PARTITION BY ta.id ORDER BY d.dt ROWS UNBOUNDED PRECEDING
+                ), 0)
+              ) as balance
+            FROM target_accounts ta
+            CROSS JOIN generate_series($2::TIMESTAMP, $3::TIMESTAMP, '1 day') d(dt)
+            LEFT JOIN pre_period pp ON pp.account_id = ta.id
+            LEFT JOIN daily_tx dtx ON dtx.account_id = ta.id AND dtx.tx_date = d.dt::DATE
+          )
+          SELECT date::TEXT, balance::NUMERIC, account_id FROM account_daily ORDER BY date`,
+        [cashIds, start, end],
+      );
+      for (const r of cashRows) {
+        if (!cashBalances.has(r.account_id))
+          cashBalances.set(r.account_id, new Map());
+        cashBalances.get(r.account_id)!.set(r.date, Number(r.balance));
+      }
+    }
+
+    // Generate daily dates
+    const dates: string[] = [];
+    const d = new Date(start + "T00:00:00");
+    const endD = new Date(end + "T00:00:00");
+    while (d <= endD) {
+      dates.push(d.toISOString().substring(0, 10));
+      d.setDate(d.getDate() + 1);
+    }
+
+    // Replay holdings day by day and compute market value
+    const holdings = new Map<string, number>();
+    let txIdx = 0;
+
+    // Currency conversion setup
+    const currencies = new Set<string>();
+    for (const a of investAccounts) {
+      if (a.currency_code !== defaultCurrency) {
+        currencies.add(a.currency_code);
+      }
+    }
+    const rateIndex = await this.buildRateIndex(
+      currencies,
+      defaultCurrency,
+      start,
+      end,
+    );
+
+    // Build account currency map
+    const acctCurrency = new Map<string, string>();
+    for (const a of investAccounts) {
+      acctCurrency.set(a.id, a.currency_code);
+    }
+
+    // Map brokerage accounts to their currency for market value conversion
+    const brokerageCurrency = new Map<string, string>();
+    for (const a of investAccounts) {
+      if (a.account_sub_type === "INVESTMENT_BROKERAGE") {
+        brokerageCurrency.set(a.id, a.currency_code);
+      }
+    }
+
+    // Track which brokerage account each security's transaction belongs to
+    const securityBrokerage = new Map<string, string>();
+    for (const tx of invTxs) {
+      if (tx.security_id && !securityBrokerage.has(tx.security_id)) {
+        securityBrokerage.set(tx.security_id, tx.account_id);
+      }
+    }
+
+    const result: { date: string; value: number }[] = [];
+
+    for (const dateStr of dates) {
+      // Process investment transactions up to this date
+      while (txIdx < invTxs.length) {
+        const tx = invTxs[txIdx];
+        const txDate = this.toDateString(tx.transaction_date);
+        if (txDate > dateStr) break;
+
+        const secId = tx.security_id;
+        const qty = Number(tx.quantity) || 0;
+
+        if (secId) {
+          switch (tx.action) {
+            case "BUY":
+            case "REINVEST":
+            case "TRANSFER_IN":
+              holdings.set(secId, (holdings.get(secId) || 0) + qty);
+              break;
+            case "SELL":
+            case "TRANSFER_OUT":
+              holdings.set(secId, (holdings.get(secId) || 0) - qty);
+              break;
+            case "SPLIT":
+              holdings.set(secId, (holdings.get(secId) || 0) + qty);
+              break;
+          }
+        }
+        txIdx++;
+      }
+
+      // Compute market value from holdings
+      let totalValue = 0;
+
+      for (const [secId, qty] of holdings) {
+        if (Math.abs(qty) < 0.00000001) continue;
+
+        const security = securityMap.get(secId);
+        let price: number | undefined;
+
+        if (security?.skipPriceUpdates) {
+          const txPrices = txPricesBySec.get(secId) || [];
+          for (const tp of txPrices) {
+            if (tp.date <= dateStr) price = tp.price;
+            else break;
+          }
+        } else {
+          const secPrices = pricesBySec.get(secId) || [];
+          for (const sp of secPrices) {
+            if (sp.date <= dateStr) price = sp.price;
+            else break;
+          }
+        }
+
+        if (price != null) {
+          let marketVal = qty * price;
+          const brokAcctId = securityBrokerage.get(secId);
+          const currency = brokAcctId
+            ? brokerageCurrency.get(brokAcctId)
+            : undefined;
+          if (currency) {
+            marketVal = this.convertCurrency(
+              marketVal,
+              currency,
+              defaultCurrency,
+              dateStr,
+              rateIndex,
+            );
+          }
+          totalValue += marketVal;
+        }
+      }
+
+      // Add cash balances for INVESTMENT_CASH and standalone accounts
+      for (const [acctId, dailyMap] of cashBalances) {
+        const bal = dailyMap.get(dateStr) ?? 0;
+        const currency = acctCurrency.get(acctId) || defaultCurrency;
+        totalValue += this.convertCurrency(
+          bal,
+          currency,
+          defaultCurrency,
+          dateStr,
+          rateIndex,
+        );
+      }
+
+      // For standalone investment accounts with brokerage data,
+      // add their cash balance from the market value computation above
+      // (standalone accounts have market_value + balance in monthly)
+
+      result.push({
+        date: dateStr,
+        value: Math.round(totalValue),
+      });
+    }
+
+    return result;
+  }
+
   // ---- Private helpers ----
 
   private async recalculateRegularAccount(

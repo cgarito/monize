@@ -12,7 +12,6 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { netWorthApi } from '@/lib/net-worth';
-import { MonthlyInvestmentValue } from '@/types/net-worth';
 import { parseLocalDate } from '@/lib/utils';
 import { useNumberFormat } from '@/hooks/useNumberFormat';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
@@ -22,6 +21,8 @@ import { createLogger } from '@/lib/logger';
 
 const logger = createLogger('InvestmentChart');
 
+const DAILY_RANGES = new Set(['1w', '1m', '3m', 'ytd', '1y']);
+
 interface InvestmentValueChartProps {
   accountIds?: string[];
   displayCurrency?: string | null;
@@ -30,9 +31,11 @@ interface InvestmentValueChartProps {
 export function InvestmentValueChart({ accountIds, displayCurrency }: InvestmentValueChartProps) {
   const { formatCurrencyCompact, formatCurrencyAxis } = useNumberFormat();
   const { defaultCurrency } = useExchangeRates();
-  const [monthlyData, setMonthlyData] = useState<MonthlyInvestmentValue[]>([]);
+  const [chartPoints, setChartPoints] = useState<Array<{ name: string; Value: number }>>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { dateRange, setDateRange, resolvedRange, isValid } = useDateRange({ defaultRange: '1y', alignment: 'month' });
+
+  const useDaily = DAILY_RANGES.has(dateRange);
 
   // Determine the effective currency for display
   const foreignCurrency = displayCurrency && displayCurrency !== defaultCurrency
@@ -53,19 +56,32 @@ export function InvestmentValueChart({ accountIds, displayCurrency }: Investment
     setIsLoading(true);
     try {
       const { start, end } = resolvedRange;
-      const data = await netWorthApi.getInvestmentsMonthly({
+      const params = {
         startDate: start,
         endDate: end,
         accountIds: accountIds?.length ? accountIds.join(',') : undefined,
         displayCurrency: foreignCurrency || undefined,
-      });
-      setMonthlyData(data);
+      };
+
+      if (useDaily) {
+        const data = await netWorthApi.getInvestmentsDaily(params);
+        setChartPoints(data.map((d) => ({
+          name: format(parseLocalDate(d.date), 'MMM d, yyyy'),
+          Value: d.value,
+        })));
+      } else {
+        const data = await netWorthApi.getInvestmentsMonthly(params);
+        setChartPoints(data.map((d) => ({
+          name: format(parseLocalDate(d.month), 'MMM yyyy'),
+          Value: d.value,
+        })));
+      }
     } catch (error) {
       logger.error('Failed to load investment data:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [resolvedRange, accountIds, foreignCurrency]);
+  }, [resolvedRange, accountIds, foreignCurrency, useDaily]);
 
   useEffect(() => {
     if (isValid) {
@@ -73,33 +89,31 @@ export function InvestmentValueChart({ accountIds, displayCurrency }: Investment
     }
   }, [isValid, loadData]);
 
-  const chartData = useMemo(() =>
-    monthlyData.map((d) => ({
-      name: format(parseLocalDate(d.month), 'MMM yyyy'),
-      Value: d.value,
-    })),
-  [monthlyData]);
-
   const summary = useMemo(() => {
-    if (chartData.length === 0) return { current: 0, change: 0, changePercent: 0 };
-    const current = chartData[chartData.length - 1]?.Value || 0;
-    const initial = chartData[0]?.Value || 0;
+    if (chartPoints.length === 0) return { current: 0, change: 0, changePercent: 0 };
+    const current = chartPoints[chartPoints.length - 1]?.Value || 0;
+    const initial = chartPoints[0]?.Value || 0;
     const change = current - initial;
     const changePercent = initial !== 0 ? (change / Math.abs(initial)) * 100 : 0;
     return { current, change, changePercent };
-  }, [chartData]);
+  }, [chartPoints]);
 
   const xAxisTicks = useMemo(() => {
-    if (chartData.length <= 36) return undefined;
-    return chartData
+    if (chartPoints.length <= 36) return undefined;
+    if (useDaily) {
+      // For daily data with many points, show ~6-8 evenly spaced ticks
+      const step = Math.ceil(chartPoints.length / 7);
+      return chartPoints.filter((_, i) => i % step === 0).map(d => d.name);
+    }
+    return chartPoints
       .filter(d => d.name.startsWith('Jan '))
       .map(d => d.name);
-  }, [chartData]);
+  }, [chartPoints, useDaily]);
 
   const yAxisDomain = useMemo(() => {
-    if (chartData.length === 0) return [0, 'auto'] as [number, 'auto'];
+    if (chartPoints.length === 0) return [0, 'auto'] as [number, 'auto'];
 
-    const values = chartData.map(d => d.Value);
+    const values = chartPoints.map(d => d.Value);
     const minValue = Math.min(...values);
     const maxValue = Math.max(...values);
     const range = maxValue - minValue;
@@ -113,7 +127,7 @@ export function InvestmentValueChart({ accountIds, displayCurrency }: Investment
     }
 
     return [Math.min(0, minValue), 'auto'] as [number, 'auto'];
-  }, [chartData]);
+  }, [chartPoints]);
 
   const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ value: number; payload: { name: string } }> }) => {
     if (active && payload && payload.length) {
@@ -184,14 +198,14 @@ export function InvestmentValueChart({ accountIds, displayCurrency }: Investment
       </div>
 
       {/* Chart */}
-      {chartData.length === 0 ? (
+      {chartPoints.length === 0 ? (
         <p className="text-gray-500 dark:text-gray-400 text-center py-8">
           No investment data for this period.
         </p>
       ) : (
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+            <AreaChart data={chartPoints} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorInvestments" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
@@ -204,9 +218,14 @@ export function InvestmentValueChart({ accountIds, displayCurrency }: Investment
                 tick={{ fontSize: 12 }}
                 {...(xAxisTicks ? { ticks: xAxisTicks } : {})}
                 tickFormatter={(value: string) => {
-                  if (chartData.length > 36) {
+                  if (useDaily) {
+                    // For daily data, show abbreviated date
+                    const parts = value.split(', ');
+                    return parts[0] || value;
+                  }
+                  if (chartPoints.length > 36) {
                     return value.split(' ')[1] || value;
-                  } else if (chartData.length > 18) {
+                  } else if (chartPoints.length > 18) {
                     const parts = value.split(' ');
                     return parts.length === 2 ? `${parts[0]} '${parts[1].slice(2)}` : value;
                   }

@@ -54,12 +54,14 @@ vi.mock('recharts', () => ({
 }));
 
 const mockGetInvestmentsMonthly = vi.fn();
+const mockGetInvestmentsDaily = vi.fn();
 const mockGetPortfolioSummary = vi.fn();
 const mockGetInvestmentAccounts = vi.fn();
 
 vi.mock('@/lib/net-worth', () => ({
   netWorthApi: {
     getInvestmentsMonthly: (...args: any[]) => mockGetInvestmentsMonthly(...args),
+    getInvestmentsDaily: (...args: any[]) => mockGetInvestmentsDaily(...args),
   },
 }));
 

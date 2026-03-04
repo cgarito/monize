@@ -9,3 +9,8 @@ export interface MonthlyInvestmentValue {
   month: string;
   value: number;
 }
+
+export interface DailyInvestmentValue {
+  date: string;
+  value: number;
+}
