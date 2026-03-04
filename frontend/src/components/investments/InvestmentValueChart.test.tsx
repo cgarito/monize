@@ -39,10 +39,11 @@ vi.mock('@/hooks/useDateRange', () => ({
 
 vi.mock('@/lib/net-worth', () => ({
   netWorthApi: {
-    getInvestmentsMonthly: vi.fn().mockResolvedValue([
-      { month: '2023-06-01', value: 10000 },
-      { month: '2024-01-01', value: 15000 },
+    getInvestmentsDaily: vi.fn().mockResolvedValue([
+      { date: '2023-06-01', value: 10000 },
+      { date: '2024-01-01', value: 15000 },
     ]),
+    getInvestmentsMonthly: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -55,13 +56,21 @@ vi.mock('@/lib/logger', () => ({
   createLogger: () => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
 }));
 
+const mockDateRangeSelectorProps = vi.fn();
+vi.mock('@/components/ui/DateRangeSelector', () => ({
+  DateRangeSelector: (props: any) => {
+    mockDateRangeSelectorProps(props);
+    return <div data-testid="date-range-selector" />;
+  },
+}));
+
 describe('InvestmentValueChart', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Restore default mock implementation for each test
-    vi.mocked(netWorthApi.getInvestmentsMonthly).mockResolvedValue([
-      { month: '2023-06-01', value: 10000 },
-      { month: '2024-01-01', value: 15000 },
+    // 1y is a daily range, so mock getInvestmentsDaily
+    vi.mocked(netWorthApi.getInvestmentsDaily).mockResolvedValue([
+      { date: '2023-06-01', value: 10000 },
+      { date: '2024-01-01', value: 15000 },
     ]);
   });
 
@@ -102,34 +111,23 @@ describe('InvestmentValueChart', () => {
   });
 
   it('shows no data message when API returns empty', async () => {
-    vi.mocked(netWorthApi.getInvestmentsMonthly).mockResolvedValue([]);
+    vi.mocked(netWorthApi.getInvestmentsDaily).mockResolvedValue([]);
     render(<InvestmentValueChart />);
     const msg = await screen.findByText('No investment data for this period.');
     expect(msg).toBeInTheDocument();
-    // Restore default mock
-    vi.mocked(netWorthApi.getInvestmentsMonthly).mockResolvedValue([
-      { month: '2023-06-01', value: 10000 },
-      { month: '2024-01-01', value: 15000 },
-    ]);
   });
 
   it('handles API failure gracefully', async () => {
-    vi.mocked(netWorthApi.getInvestmentsMonthly).mockRejectedValue(new Error('Network error'));
+    vi.mocked(netWorthApi.getInvestmentsDaily).mockRejectedValue(new Error('Network error'));
     render(<InvestmentValueChart />);
-    // Should not crash; shows no data since monthlyData stays empty
     const msg = await screen.findByText('No investment data for this period.');
     expect(msg).toBeInTheDocument();
-    // Restore default mock
-    vi.mocked(netWorthApi.getInvestmentsMonthly).mockResolvedValue([
-      { month: '2023-06-01', value: 10000 },
-      { month: '2024-01-01', value: 15000 },
-    ]);
   });
 
   it('passes accountIds to API when provided', async () => {
     render(<InvestmentValueChart accountIds={['acc-1', 'acc-2']} />);
     await screen.findByText('Portfolio Value Over Time');
-    expect(netWorthApi.getInvestmentsMonthly).toHaveBeenCalledWith(
+    expect(netWorthApi.getInvestmentsDaily).toHaveBeenCalledWith(
       expect.objectContaining({
         accountIds: 'acc-1,acc-2',
       })
@@ -139,22 +137,35 @@ describe('InvestmentValueChart', () => {
   it('does not pass accountIds when empty array', async () => {
     render(<InvestmentValueChart accountIds={[]} />);
     await screen.findByText('Portfolio Value Over Time');
-    expect(netWorthApi.getInvestmentsMonthly).toHaveBeenCalledWith(
+    expect(netWorthApi.getInvestmentsDaily).toHaveBeenCalledWith(
       expect.objectContaining({
         accountIds: undefined,
       })
     );
   });
 
+  it('passes date filter ranges including 1w, 1m, 3m, ytd to DateRangeSelector', async () => {
+    render(<InvestmentValueChart />);
+    await screen.findByText('Portfolio Value Over Time');
+    const lastCall = mockDateRangeSelectorProps.mock.calls[mockDateRangeSelectorProps.mock.calls.length - 1][0];
+    expect(lastCall.ranges).toEqual(['1w', '1m', '3m', 'ytd', '1y', '2y', '5y', 'all']);
+  });
+
   it('shows negative change values correctly', async () => {
-    vi.mocked(netWorthApi.getInvestmentsMonthly).mockResolvedValue([
-      { month: '2023-06-01', value: 20000 },
-      { month: '2024-01-01', value: 15000 },
+    vi.mocked(netWorthApi.getInvestmentsDaily).mockResolvedValue([
+      { date: '2023-06-01', value: 20000 },
+      { date: '2024-01-01', value: 15000 },
     ]);
     render(<InvestmentValueChart />);
     await screen.findByText('Portfolio Value Over Time');
-    // current: $15000, initial: $20000, change: -$5000, percent: -25.0%
     expect(screen.getByText('$15000')).toBeInTheDocument();
     expect(screen.getByText('-25.0%')).toBeInTheDocument();
+  });
+
+  it('uses daily API for 1y range (DAILY_RANGES)', async () => {
+    render(<InvestmentValueChart />);
+    await screen.findByText('Portfolio Value Over Time');
+    expect(netWorthApi.getInvestmentsDaily).toHaveBeenCalled();
+    expect(netWorthApi.getInvestmentsMonthly).not.toHaveBeenCalled();
   });
 });

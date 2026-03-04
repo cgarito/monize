@@ -18,20 +18,87 @@ describe('useDateRange', () => {
     expect(result.current.isValid).toBe(true);
   });
 
-  it('resolves 1m range', () => {
+  it('resolves 1w range', () => {
+    const { result } = renderHook(() => useDateRange({ defaultRange: '1w' }));
+    expect(result.current.resolvedRange.start).toBe('2025-01-08');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves 1w range with month alignment uses day-level dates', () => {
+    const { result } = renderHook(() =>
+      useDateRange({ defaultRange: '1w', alignment: 'month' })
+    );
+    // Short ranges always use day-level precision (today as end)
+    expect(result.current.resolvedRange.start).toBe('2025-01-08');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves 1m range as 30 days ago', () => {
     const { result } = renderHook(() => useDateRange({ defaultRange: '1m' }));
-    expect(result.current.resolvedRange.start).toBe('2024-12-15');
+    expect(result.current.resolvedRange.start).toBe('2024-12-16');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves 1m range with month alignment uses day-level dates', () => {
+    const { result } = renderHook(() =>
+      useDateRange({ defaultRange: '1m', alignment: 'month' })
+    );
+    // 1m always uses day-level: 30 days ago, end = today
+    expect(result.current.resolvedRange.start).toBe('2024-12-16');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves 3m range as 90 days ago', () => {
+    const { result } = renderHook(() => useDateRange({ defaultRange: '3m' }));
+    expect(result.current.resolvedRange.start).toBe('2024-10-17');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves 3m range with month alignment uses day-level dates', () => {
+    const { result } = renderHook(() =>
+      useDateRange({ defaultRange: '3m', alignment: 'month' })
+    );
+    // 3m always uses day-level: 90 days ago, end = today
+    expect(result.current.resolvedRange.start).toBe('2024-10-17');
     expect(result.current.resolvedRange.end).toBe('2025-01-15');
   });
 
   it('resolves 1y range', () => {
     const { result } = renderHook(() => useDateRange({ defaultRange: '1y' }));
     expect(result.current.resolvedRange.start).toBe('2024-01-15');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves 1y range with month alignment uses day-level dates', () => {
+    const { result } = renderHook(() =>
+      useDateRange({ defaultRange: '1y', alignment: 'month' })
+    );
+    // 1y uses day-level: exactly 1 year ago, end = today
+    expect(result.current.resolvedRange.start).toBe('2024-01-15');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
   });
 
   it('resolves ytd range', () => {
     const { result } = renderHook(() => useDateRange({ defaultRange: 'ytd' }));
     expect(result.current.resolvedRange.start).toBe('2025-01-01');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves ytd range with month alignment uses day-level dates', () => {
+    const { result } = renderHook(() =>
+      useDateRange({ defaultRange: 'ytd', alignment: 'month' })
+    );
+    expect(result.current.resolvedRange.start).toBe('2025-01-01');
+    expect(result.current.resolvedRange.end).toBe('2025-01-15');
+  });
+
+  it('resolves 2y range with month alignment snaps to month boundaries', () => {
+    const { result } = renderHook(() =>
+      useDateRange({ defaultRange: '2y', alignment: 'month' })
+    );
+    // Long ranges still use month alignment
+    expect(result.current.resolvedRange.start).toBe('2023-02-01');
+    expect(result.current.resolvedRange.end).toBe('2025-01-31');
   });
 
   it('resolves all range with empty start', () => {
@@ -58,13 +125,5 @@ describe('useDateRange', () => {
       result.current.setDateRange('6m');
     });
     expect(result.current.dateRange).toBe('6m');
-  });
-
-  it('month alignment snaps to start/end of month', () => {
-    const { result } = renderHook(() =>
-      useDateRange({ defaultRange: '1m', alignment: 'month' })
-    );
-    expect(result.current.resolvedRange.start).toBe('2025-01-01');
-    expect(result.current.resolvedRange.end).toBe('2025-01-31');
   });
 });

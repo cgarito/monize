@@ -1407,4 +1407,190 @@ describe("NetWorthService", () => {
       });
     });
   });
+
+  describe("getDailyInvestments", () => {
+    it("returns empty array when no accounts match", async () => {
+      prefRepository.findOne.mockResolvedValue({
+        defaultCurrency: "USD",
+      });
+      // accounts query returns empty
+      dataSource.query.mockResolvedValueOnce([]);
+
+      const result = await service.getDailyInvestments(
+        "user-1",
+        "2025-03-01",
+        "2025-03-04",
+      );
+
+      expect(result).toEqual([]);
+    });
+
+    it("returns daily values for brokerage accounts with security prices", async () => {
+      prefRepository.findOne.mockResolvedValue({
+        defaultCurrency: "USD",
+      });
+
+      // accounts query
+      dataSource.query.mockResolvedValueOnce([
+        {
+          id: "brok-1",
+          account_type: "INVESTMENT",
+          account_sub_type: "INVESTMENT_BROKERAGE",
+          currency_code: "USD",
+          opening_balance: 0,
+        },
+      ]);
+
+      // investment transactions query
+      dataSource.query.mockResolvedValueOnce([
+        {
+          account_id: "brok-1",
+          security_id: "sec-1",
+          action: "BUY",
+          quantity: "10",
+          transaction_date: "2025-02-01",
+        },
+      ]);
+
+      // securities
+      securityRepository.findByIds.mockResolvedValue([
+        { id: "sec-1", skipPriceUpdates: false },
+      ]);
+
+      // security prices query
+      dataSource.query.mockResolvedValueOnce([
+        {
+          security_id: "sec-1",
+          price_date: "2025-03-01",
+          close_price: "100.00",
+        },
+        {
+          security_id: "sec-1",
+          price_date: "2025-03-02",
+          close_price: "102.00",
+        },
+        {
+          security_id: "sec-1",
+          price_date: "2025-03-03",
+          close_price: "101.00",
+        },
+      ]);
+
+      const result = await service.getDailyInvestments(
+        "user-1",
+        "2025-03-01",
+        "2025-03-03",
+      );
+
+      expect(result).toHaveLength(3);
+      expect(result[0]).toEqual({ date: "2025-03-01", value: 1000 });
+      expect(result[1]).toEqual({ date: "2025-03-02", value: 1020 });
+      expect(result[2]).toEqual({ date: "2025-03-03", value: 1010 });
+    });
+
+    it("includes cash balances from INVESTMENT_CASH accounts", async () => {
+      prefRepository.findOne.mockResolvedValue({
+        defaultCurrency: "USD",
+      });
+
+      // accounts query: only a cash account
+      dataSource.query.mockResolvedValueOnce([
+        {
+          id: "cash-1",
+          account_type: "INVESTMENT",
+          account_sub_type: "INVESTMENT_CASH",
+          currency_code: "USD",
+          opening_balance: 5000,
+        },
+      ]);
+
+      // no investment transactions (no brokerage accounts)
+
+      // securities (empty)
+      securityRepository.findByIds.mockResolvedValue([]);
+
+      // cash balances CTE query
+      dataSource.query.mockResolvedValueOnce([
+        { date: "2025-03-01", balance: "5000", account_id: "cash-1" },
+        { date: "2025-03-02", balance: "5100", account_id: "cash-1" },
+      ]);
+
+      const result = await service.getDailyInvestments(
+        "user-1",
+        "2025-03-01",
+        "2025-03-02",
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({ date: "2025-03-01", value: 5000 });
+      expect(result[1]).toEqual({ date: "2025-03-02", value: 5100 });
+    });
+
+    it("resolves linked account pairs when accountIds provided", async () => {
+      prefRepository.findOne.mockResolvedValue({
+        defaultCurrency: "USD",
+      });
+
+      // Linked account resolution
+      dataSource.query.mockResolvedValueOnce([
+        { id: "brok-1", linked_account_id: "cash-1" },
+        { id: "cash-1", linked_account_id: "brok-1" },
+      ]);
+
+      // accounts query with resolved IDs
+      dataSource.query.mockResolvedValueOnce([
+        {
+          id: "brok-1",
+          account_type: "INVESTMENT",
+          account_sub_type: "INVESTMENT_BROKERAGE",
+          currency_code: "USD",
+          opening_balance: 0,
+        },
+        {
+          id: "cash-1",
+          account_type: "INVESTMENT",
+          account_sub_type: "INVESTMENT_CASH",
+          currency_code: "USD",
+          opening_balance: 1000,
+        },
+      ]);
+
+      // investment transactions
+      dataSource.query.mockResolvedValueOnce([]);
+      // securities
+      securityRepository.findByIds.mockResolvedValue([]);
+      // cash balances
+      dataSource.query.mockResolvedValueOnce([
+        { date: "2025-03-01", balance: "1000", account_id: "cash-1" },
+      ]);
+
+      const result = await service.getDailyInvestments(
+        "user-1",
+        "2025-03-01",
+        "2025-03-01",
+        ["brok-1"],
+      );
+
+      expect(result).toHaveLength(1);
+      expect(result[0].value).toBe(1000);
+    });
+
+    it("returns empty when accountIds resolve to no accounts", async () => {
+      prefRepository.findOne.mockResolvedValue({
+        defaultCurrency: "USD",
+      });
+
+      // Linked account resolution returns empty
+      dataSource.query.mockResolvedValueOnce([]);
+
+      const result = await service.getDailyInvestments(
+        "user-1",
+        "2025-03-01",
+        "2025-03-01",
+        ["nonexistent"],
+      );
+
+      expect(result).toEqual([]);
+    });
+  });
 });

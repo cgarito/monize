@@ -11,6 +11,7 @@ describe("NetWorthController", () => {
     mockNetWorthService = {
       getMonthlyNetWorth: jest.fn(),
       getMonthlyInvestments: jest.fn(),
+      getDailyInvestments: jest.fn(),
       recalculateAllAccounts: jest.fn(),
     };
 
@@ -101,6 +102,73 @@ describe("NetWorthController", () => {
         undefined,
         undefined,
       );
+    });
+  });
+
+  describe("getDailyInvestments()", () => {
+    it("delegates to netWorthService.getDailyInvestments with userId, dates, and parsed accountIds", () => {
+      mockNetWorthService.getDailyInvestments!.mockReturnValue("daily");
+
+      const result = controller.getDailyInvestments(
+        mockReq,
+        "2025-02-01",
+        "2025-03-04",
+        "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "USD",
+      );
+
+      expect(result).toBe("daily");
+      expect(mockNetWorthService.getDailyInvestments).toHaveBeenCalledWith(
+        "user-1",
+        "2025-02-01",
+        "2025-03-04",
+        ["a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"],
+        "USD",
+      );
+    });
+
+    it("passes undefined accountIds when not provided", () => {
+      mockNetWorthService.getDailyInvestments!.mockReturnValue("daily");
+
+      controller.getDailyInvestments(
+        mockReq,
+        "2025-02-01",
+        "2025-03-04",
+        undefined,
+        undefined,
+      );
+
+      expect(mockNetWorthService.getDailyInvestments).toHaveBeenCalledWith(
+        "user-1",
+        "2025-02-01",
+        "2025-03-04",
+        undefined,
+        undefined,
+      );
+    });
+
+    it("throws BadRequestException for invalid startDate format", () => {
+      expect(() =>
+        controller.getDailyInvestments(
+          mockReq,
+          "invalid",
+          undefined,
+          undefined,
+          undefined,
+        ),
+      ).toThrow("startDate must be YYYY-MM-DD");
+    });
+
+    it("throws BadRequestException for invalid accountIds", () => {
+      expect(() =>
+        controller.getDailyInvestments(
+          mockReq,
+          "2025-01-01",
+          "2025-03-04",
+          "not-a-uuid",
+          undefined,
+        ),
+      ).toThrow("accountIds must be comma-separated UUIDs");
     });
   });
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { format, subMonths, subYears, startOfMonth, endOfMonth } from 'date-fns';
+import { format, subMonths, subDays, subYears, subWeeks, startOfMonth, endOfMonth } from 'date-fns';
 
 interface UseDateRangeOptions {
   /** Which preset is selected by default. */
@@ -41,22 +41,24 @@ export function useDateRange(options: UseDateRangeOptions): UseDateRangeReturn {
 
       const now = new Date();
       const isMonth = alignment === 'month';
-      const end = isMonth
+      // Short-range presets always use today as end date (day-level precision).
+      // Long-range presets with month alignment snap to end of month.
+      const useDayLevel = ['1w', '1m', '3m', 'ytd', '1y'].includes(range);
+      const end = isMonth && !useDayLevel
         ? format(endOfMonth(now), 'yyyy-MM-dd')
         : format(now, 'yyyy-MM-dd');
 
       let start: string;
 
       switch (range) {
+        case '1w':
+          start = format(subWeeks(now, 1), 'yyyy-MM-dd');
+          break;
         case '1m':
-          start = isMonth
-            ? format(startOfMonth(subMonths(now, 0)), 'yyyy-MM-dd')
-            : format(subMonths(now, 1), 'yyyy-MM-dd');
+          start = format(subDays(now, 30), 'yyyy-MM-dd');
           break;
         case '3m':
-          start = isMonth
-            ? format(startOfMonth(subMonths(now, 2)), 'yyyy-MM-dd')
-            : format(subMonths(now, 3), 'yyyy-MM-dd');
+          start = format(subDays(now, 90), 'yyyy-MM-dd');
           break;
         case '6m':
           start = isMonth
@@ -64,9 +66,7 @@ export function useDateRange(options: UseDateRangeOptions): UseDateRangeReturn {
             : format(subMonths(now, 6), 'yyyy-MM-dd');
           break;
         case '1y':
-          start = isMonth
-            ? format(startOfMonth(subMonths(now, 11)), 'yyyy-MM-dd')
-            : format(subMonths(now, 12), 'yyyy-MM-dd');
+          start = format(subYears(now, 1), 'yyyy-MM-dd');
           break;
         case '2y':
           start = isMonth
@@ -79,10 +79,7 @@ export function useDateRange(options: UseDateRangeOptions): UseDateRangeReturn {
             : format(subYears(now, 5), 'yyyy-MM-dd');
           break;
         case 'ytd':
-          start = format(
-            startOfMonth(new Date(now.getFullYear(), 0, 1)),
-            'yyyy-MM-dd'
-          );
+          start = `${now.getFullYear()}-01-01`;
           break;
         case 'all':
           start = '';

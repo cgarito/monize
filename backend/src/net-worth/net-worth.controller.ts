@@ -100,6 +100,59 @@ export class NetWorthController {
     );
   }
 
+  @Get("investments-daily")
+  @ApiOperation({ summary: "Get daily investment portfolio value" })
+  @ApiQuery({ name: "startDate", required: false, example: "2025-01-01" })
+  @ApiQuery({ name: "endDate", required: false, example: "2025-03-04" })
+  @ApiQuery({
+    name: "accountIds",
+    required: false,
+    description:
+      "Comma-separated account IDs to filter by (will include linked pairs)",
+  })
+  @ApiQuery({
+    name: "displayCurrency",
+    required: false,
+    description:
+      "Currency code to display values in (defaults to user preference)",
+  })
+  @ApiResponse({ status: 200, description: "Daily investment value data" })
+  @ApiResponse({ status: 401, description: "Unauthorized" })
+  getDailyInvestments(
+    @Request() req,
+    @Query("startDate") startDate?: string,
+    @Query("endDate") endDate?: string,
+    @Query("accountIds") accountIds?: string,
+    @Query("displayCurrency") displayCurrency?: string,
+  ) {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (startDate && !dateRegex.test(startDate))
+      throw new BadRequestException("startDate must be YYYY-MM-DD");
+    if (endDate && !dateRegex.test(endDate))
+      throw new BadRequestException("endDate must be YYYY-MM-DD");
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const ids = accountIds ? accountIds.split(",").filter(Boolean) : undefined;
+    if (ids) {
+      for (const id of ids) {
+        if (!uuidRegex.test(id))
+          throw new BadRequestException(
+            "accountIds must be comma-separated UUIDs",
+          );
+      }
+    }
+    const safeCurrency = displayCurrency
+      ? displayCurrency.slice(0, 3).toUpperCase()
+      : undefined;
+    return this.netWorthService.getDailyInvestments(
+      req.user.id,
+      startDate,
+      endDate,
+      ids,
+      safeCurrency,
+    );
+  }
+
   @Post("recalculate")
   @ApiOperation({ summary: "Trigger full net worth recalculation" })
   @ApiResponse({ status: 201, description: "Recalculation triggered" })
