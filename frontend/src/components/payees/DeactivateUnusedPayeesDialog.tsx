@@ -103,9 +103,10 @@ export function DeactivateUnusedPayeesDialog({
 
   const formatMonthsLabel = (months: number): string => {
     if (months < 12) return `${months} month${months !== 1 ? 's' : ''}`;
-    const years = months / 12;
-    if (Number.isInteger(years)) return `${years} year${years !== 1 ? 's' : ''}`;
-    return `${months} months`;
+    const years = Math.floor(months / 12);
+    const remainingMonths = months % 12;
+    if (remainingMonths === 0) return `${years} year${years !== 1 ? 's' : ''}`;
+    return `${years}.5 years`;
   };
 
   const formatDate = (dateStr: string | null): string => {
@@ -170,17 +171,17 @@ export function DeactivateUnusedPayeesDialog({
             </label>
             <input
               type="range"
-              min="3"
-              max="60"
-              step="3"
+              min="6"
+              max="120"
+              step="6"
               value={monthsUnused}
               onChange={(e) => setMonthsUnused(parseInt(e.target.value))}
               className="w-full h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-amber-600"
             />
             <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
-              <span>3 months</span>
-              <span>2 years</span>
+              <span>6 months</span>
               <span>5 years</span>
+              <span>10 years</span>
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Only include payees not used since this long ago (or never used)
