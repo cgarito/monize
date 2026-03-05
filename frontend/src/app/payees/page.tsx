@@ -225,7 +225,7 @@ function PayeesContent() {
             className="block w-full sm:max-w-md rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-400 dark:focus:border-blue-400 dark:focus:ring-blue-400"
           />
           <div className="flex rounded-md shadow-sm">
-            {(['active', 'inactive', 'all'] as PayeeStatusFilter[]).map((status) => (
+            {(['all', 'active', 'inactive'] as PayeeStatusFilter[]).map((status) => (
               <button
                 key={status}
                 onClick={() => setStatusFilter(status)}
@@ -234,11 +234,11 @@ function PayeesContent() {
                     ? 'bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500'
                     : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
                 } ${
-                  status === 'active' ? 'rounded-l-md' : ''
+                  status === 'all' ? 'rounded-l-md' : ''
                 } ${
-                  status === 'all' ? 'rounded-r-md' : ''
+                  status === 'inactive' ? 'rounded-r-md' : ''
                 } ${
-                  status !== 'active' ? '-ml-px' : ''
+                  status !== 'all' ? '-ml-px' : ''
                 }`}
               >
                 {status === 'active' ? `Active (${activeCount})` :
