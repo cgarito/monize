@@ -366,7 +366,7 @@ describe("AccountsController", () => {
       expect(mockRes.send).toHaveBeenCalledWith("csv-content");
     });
 
-    it("passes expandSplits false to CSV export", async () => {
+    it("passes expandSplits false to CSV export (string)", async () => {
       mockAccountsService.findOne!.mockResolvedValue({
         name: "Chequing",
       });
@@ -377,6 +377,27 @@ describe("AccountsController", () => {
         "account-1",
         "csv",
         "false",
+        mockRes,
+      );
+
+      expect(mockExportService.exportCsv).toHaveBeenCalledWith(
+        "user-1",
+        "account-1",
+        { expandSplits: false },
+      );
+    });
+
+    it("passes expandSplits false to CSV export (boolean from transform)", async () => {
+      mockAccountsService.findOne!.mockResolvedValue({
+        name: "Chequing",
+      });
+      mockExportService.exportCsv!.mockResolvedValue("csv-content");
+
+      await controller.exportAccount(
+        mockReq,
+        "account-1",
+        "csv",
+        false as any,
         mockRes,
       );
 

@@ -227,7 +227,7 @@ export class AccountsController {
     const safeName = account.name.replace(/[^a-zA-Z0-9_-]/g, "_");
 
     if (format === "csv") {
-      const shouldExpandSplits = expandSplits !== "false";
+      const shouldExpandSplits = String(expandSplits) !== "false";
       const content = await this.accountExportService.exportCsv(
         req.user.id,
         id,
