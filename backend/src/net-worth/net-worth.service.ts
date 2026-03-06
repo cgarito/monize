@@ -417,7 +417,11 @@ export class NetWorthService {
     if (investAccounts.length === 0) return [];
 
     const brokerageIds = investAccounts
-      .filter((a) => a.account_sub_type === "INVESTMENT_BROKERAGE")
+      .filter(
+        (a) =>
+          a.account_sub_type === "INVESTMENT_BROKERAGE" ||
+          (a.account_type === "INVESTMENT" && !a.account_sub_type),
+      )
       .map((a) => a.id);
     const cashIds = investAccounts
       .filter(
@@ -597,10 +601,13 @@ export class NetWorthService {
       acctCurrency.set(a.id, a.currency_code);
     }
 
-    // Map brokerage accounts to their currency for market value conversion
+    // Map brokerage and standalone investment accounts to their currency for market value conversion
     const brokerageCurrency = new Map<string, string>();
     for (const a of investAccounts) {
-      if (a.account_sub_type === "INVESTMENT_BROKERAGE") {
+      if (
+        a.account_sub_type === "INVESTMENT_BROKERAGE" ||
+        (a.account_type === "INVESTMENT" && !a.account_sub_type)
+      ) {
         brokerageCurrency.set(a.id, a.currency_code);
       }
     }
