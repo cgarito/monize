@@ -25,6 +25,7 @@ interface Report {
   category: ReportCategory;
   color: string;
   isCustom?: boolean;
+  isFavourite?: boolean;
 }
 
 const reports: Report[] = [
@@ -562,6 +563,7 @@ function ReportsContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [customReports, setCustomReports] = useState<CustomReport[]>([]);
   const [isLoadingCustom, setIsLoadingCustom] = useState(true);
+  const [favouriteReportIds, setFavouriteReportIds] = useLocalStorage<string[]>('monize-favourite-reports', []);
 
   useEffect(() => {
     const loadCustomReports = async () => {
@@ -579,6 +581,34 @@ function ReportsContent() {
 
   const cycleDensity = () => setDensity(nextDensity(density));
 
+  const isReportFavourite = (report: Report): boolean => {
+    if (report.isCustom) {
+      return report.isFavourite ?? false;
+    }
+    return favouriteReportIds.includes(report.id);
+  };
+
+  const handleToggleFavourite = async (e: React.MouseEvent, report: Report) => {
+    e.stopPropagation();
+    if (report.isCustom) {
+      const cr = customReports.find(c => `custom/${c.id}` === report.id);
+      if (!cr) return;
+      const newValue = !cr.isFavourite;
+      try {
+        await customReportsApi.toggleFavourite(cr.id, newValue);
+        setCustomReports(prev => prev.map(c => c.id === cr.id ? { ...c, isFavourite: newValue } : c));
+      } catch (error) {
+        logger.error('Failed to toggle favourite:', error);
+      }
+    } else {
+      setFavouriteReportIds(prev =>
+        prev.includes(report.id)
+          ? prev.filter(id => id !== report.id)
+          : [...prev, report.id]
+      );
+    }
+  };
+
   const densityLabels: Record<DensityLevel, string> = {
     normal: 'Normal',
     compact: 'Compact',
@@ -595,6 +625,7 @@ function ReportsContent() {
       category: 'custom' as ReportCategory,
       color: cr.backgroundColor ? '' : 'bg-purple-500',
       isCustom: true,
+      isFavourite: cr.isFavourite,
       icon: iconNode || (
         <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -605,14 +636,16 @@ function ReportsContent() {
 
   const allReports = [...reports, ...customReportsAsReports];
 
-  const filteredReports = allReports.filter(r => {
-    if (categoryFilter !== 'all' && r.category !== categoryFilter) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      return r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q);
-    }
-    return true;
-  });
+  const filteredReports = allReports
+    .filter(r => {
+      if (categoryFilter !== 'all' && r.category !== categoryFilter) return false;
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        return r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q);
+      }
+      return true;
+    })
+    .sort((a, b) => Number(isReportFavourite(b)) - Number(isReportFavourite(a)));
 
   const handleReportClick = (reportId: string) => {
     router.push(`/reports/${reportId}`);
@@ -627,27 +660,15 @@ function ReportsContent() {
           subtitle="Generate insights about your financial health"
           helpUrl="https://github.com/kenlasko/monize/wiki/Reports"
           actions={
-            <>
-              <Button
-                onClick={() => router.push('/reports/custom/new')}
-                className="inline-flex items-center justify-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                New Custom Report
-              </Button>
-              <button
-                onClick={cycleDensity}
-                className="inline-flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                title={`Switch to ${densityLabels[nextDensity(density)]} view`}
-              >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                </svg>
-                {densityLabels[density]}
-              </button>
-            </>
+            <Button
+              onClick={() => router.push('/reports/custom/new')}
+              className="inline-flex items-center justify-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Custom Report
+            </Button>
           }
         />
         {/* Search */}
@@ -662,7 +683,7 @@ function ReportsContent() {
         </div>
 
         {/* Category Filter */}
-        <div className="mb-6 flex flex-wrap gap-2">
+        <div className="mb-6 flex flex-wrap items-center gap-2">
           <button
             onClick={() => setCategoryFilter('all')}
             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
@@ -686,6 +707,16 @@ function ReportsContent() {
               {categoryLabels[cat]}
             </button>
           ))}
+          <button
+            onClick={cycleDensity}
+            className="ml-auto inline-flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            title={`Switch to ${densityLabels[nextDensity(density)]} view`}
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            {densityLabels[density]}
+          </button>
         </div>
 
         {/* Reports Grid */}
@@ -714,6 +745,23 @@ function ReportsContent() {
                       <div className="text-gray-700 dark:text-gray-200">
                         {report.icon}
                       </div>
+                    </div>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => handleToggleFavourite(e, report)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleToggleFavourite(e as unknown as React.MouseEvent, report); } }}
+                      className="absolute top-3 left-3 p-1 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                      title={isReportFavourite(report) ? 'Remove from favourites' : 'Add to favourites'}
+                    >
+                      <svg
+                        className={`w-5 h-5 ${isReportFavourite(report) ? 'text-yellow-500' : 'text-gray-300 dark:text-gray-500'}`}
+                        fill={isReportFavourite(report) ? 'currentColor' : 'none'}
+                        stroke="currentColor"
+                        viewBox="0 0 20 20"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                      </svg>
                     </div>
                     <span className={`absolute top-3 right-3 px-2 py-1 text-xs font-medium rounded ${categoryColors[report.category]}`}>
                       {categoryLabels[report.category]}
@@ -768,6 +816,23 @@ function ReportsContent() {
                       {report.description}
                     </p>
                   </div>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => handleToggleFavourite(e, report)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleToggleFavourite(e as unknown as React.MouseEvent, report); } }}
+                    className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
+                    title={isReportFavourite(report) ? 'Remove from favourites' : 'Add to favourites'}
+                  >
+                    <svg
+                      className={`w-4 h-4 ${isReportFavourite(report) ? 'text-yellow-500' : 'text-gray-300 dark:text-gray-500'}`}
+                      fill={isReportFavourite(report) ? 'currentColor' : 'none'}
+                      stroke="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                    </svg>
+                  </div>
                 </button>
               );
             })}
@@ -779,6 +844,7 @@ function ReportsContent() {
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-900/50">
                 <tr>
+                  <th className="w-10 px-2 py-3"></th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Report
                   </th>
@@ -802,6 +868,22 @@ function ReportsContent() {
                       onClick={() => handleReportClick(report.id)}
                       className="hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors"
                     >
+                      <td className="px-2 py-3 text-center">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleToggleFavourite(e, report); }}
+                          className="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          title={isReportFavourite(report) ? 'Remove from favourites' : 'Add to favourites'}
+                        >
+                          <svg
+                            className={`w-4 h-4 ${isReportFavourite(report) ? 'text-yellow-500' : 'text-gray-300 dark:text-gray-500'}`}
+                            fill={isReportFavourite(report) ? 'currentColor' : 'none'}
+                            stroke="currentColor"
+                            viewBox="0 0 20 20"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                          </svg>
+                        </button>
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div

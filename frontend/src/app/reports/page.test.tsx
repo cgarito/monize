@@ -65,9 +65,11 @@ vi.mock('@/lib/auth', () => ({
 
 // Mock custom reports API
 const mockGetAllReports = vi.fn().mockResolvedValue([]);
+const mockToggleFavourite = vi.fn().mockResolvedValue({});
 vi.mock('@/lib/custom-reports', () => ({
   customReportsApi: {
     getAll: (...args: any[]) => mockGetAllReports(...args),
+    toggleFavourite: (...args: any[]) => mockToggleFavourite(...args),
   },
 }));
 
@@ -83,8 +85,10 @@ vi.mock('@/components/layout/AppHeader', () => ({
 
 const mockSetDensity = vi.fn();
 const mockSetCategoryFilter = vi.fn();
+const mockSetFavouriteReportIds = vi.fn();
 let currentDensity = 'normal';
 let currentCategoryFilter = 'all';
+let currentFavouriteReportIds: string[] = [];
 
 vi.mock('@/hooks/useLocalStorage', () => ({
   useLocalStorage: (key: string, defaultValue: any) => {
@@ -93,6 +97,9 @@ vi.mock('@/hooks/useLocalStorage', () => ({
     }
     if (key === 'monize-reports-category') {
       return [currentCategoryFilter, mockSetCategoryFilter];
+    }
+    if (key === 'monize-favourite-reports') {
+      return [currentFavouriteReportIds, mockSetFavouriteReportIds];
     }
     return [defaultValue, vi.fn()];
   },
@@ -131,6 +138,7 @@ describe('ReportsPage', () => {
     vi.clearAllMocks();
     currentDensity = 'normal';
     currentCategoryFilter = 'all';
+    currentFavouriteReportIds = [];
     mockGetAllReports.mockResolvedValue([]);
   });
 
@@ -452,5 +460,214 @@ describe('ReportsPage', () => {
     });
     // Built-in reports should not appear
     expect(screen.queryByText('Spending by Category')).not.toBeInTheDocument();
+  });
+
+  // Favourite tests
+
+  it('renders favourite stars for all reports in normal view', async () => {
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const stars = screen.getAllByTitle('Add to favourites');
+    expect(stars.length).toBeGreaterThan(0);
+  });
+
+  it('renders favourite stars in compact view', async () => {
+    currentDensity = 'compact';
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const stars = screen.getAllByTitle('Add to favourites');
+    expect(stars.length).toBeGreaterThan(0);
+  });
+
+  it('renders favourite stars in dense view', async () => {
+    currentDensity = 'dense';
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const stars = screen.getAllByTitle('Add to favourites');
+    expect(stars.length).toBeGreaterThan(0);
+  });
+
+  it('shows filled star for favourited built-in reports', async () => {
+    currentFavouriteReportIds = ['spending-by-category'];
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const removeStars = screen.getAllByTitle('Remove from favourites');
+    expect(removeStars.length).toBe(1);
+  });
+
+  it('clicking favourite star on built-in report calls setter', async () => {
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const stars = screen.getAllByTitle('Add to favourites');
+    fireEvent.click(stars[0]);
+    expect(mockSetFavouriteReportIds).toHaveBeenCalled();
+  });
+
+  it('clicking favourite star does not navigate to the report', async () => {
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const stars = screen.getAllByTitle('Add to favourites');
+    fireEvent.click(stars[0]);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('clicking favourite star on custom report calls toggleFavourite API', async () => {
+    mockGetAllReports.mockResolvedValue([
+      {
+        id: 'cr-1',
+        name: 'My Custom Report',
+        description: 'A custom report',
+        icon: null,
+        backgroundColor: null,
+        viewType: 'TABLE',
+        timeframeType: 'LAST_30_DAYS',
+        groupBy: 'CATEGORY',
+        filters: {},
+        config: {},
+        isFavourite: false,
+        sortOrder: 0,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      },
+    ]);
+    mockToggleFavourite.mockResolvedValue({ id: 'cr-1', isFavourite: true });
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('My Custom Report')).toBeInTheDocument();
+    });
+    // Find the star next to the custom report - it will be the last "Add to favourites" since custom reports append after built-in
+    const stars = screen.getAllByTitle('Add to favourites');
+    const lastStar = stars[stars.length - 1];
+    fireEvent.click(lastStar);
+    await waitFor(() => {
+      expect(mockToggleFavourite).toHaveBeenCalledWith('cr-1', true);
+    });
+  });
+
+  it('shows filled star for favourited custom reports', async () => {
+    mockGetAllReports.mockResolvedValue([
+      {
+        id: 'cr-1',
+        name: 'My Custom Report',
+        description: 'A custom report',
+        icon: null,
+        backgroundColor: null,
+        viewType: 'TABLE',
+        timeframeType: 'LAST_30_DAYS',
+        groupBy: 'CATEGORY',
+        filters: {},
+        config: {},
+        isFavourite: true,
+        sortOrder: 0,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      },
+    ]);
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('My Custom Report')).toBeInTheDocument();
+    });
+    const removeStars = screen.getAllByTitle('Remove from favourites');
+    expect(removeStars.length).toBe(1);
+  });
+
+  it('sorts favourited reports to the top', async () => {
+    // Favourite "Tax Summary" (id: 'tax-summary') - should appear before non-favourited reports
+    currentFavouriteReportIds = ['tax-summary'];
+    currentCategoryFilter = 'all';
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Tax Summary')).toBeInTheDocument();
+    });
+    // Get all report names in rendered order
+    const reportNames = screen.getAllByText(/./i)
+      .filter(el => el.tagName === 'H3')
+      .map(el => el.textContent);
+    // Tax Summary should be first since it's favourited
+    expect(reportNames[0]).toBe('Tax Summary');
+  });
+
+  it('density toggle is in the filter bar, not in header actions', async () => {
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Normal')).toBeInTheDocument();
+    });
+    // The density toggle should NOT be inside the PageHeader mock (data-testid="page-header")
+    const pageHeader = screen.getByTestId('page-header');
+    expect(pageHeader).not.toHaveTextContent('Normal');
+  });
+
+  it('unfavouriting a built-in report calls setter to remove it', async () => {
+    currentFavouriteReportIds = ['spending-by-category'];
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const removeStar = screen.getByTitle('Remove from favourites');
+    fireEvent.click(removeStar);
+    expect(mockSetFavouriteReportIds).toHaveBeenCalled();
+    // Verify the updater function removes the ID
+    const updater = mockSetFavouriteReportIds.mock.calls[0][0];
+    const result = updater(['spending-by-category']);
+    expect(result).toEqual([]);
+  });
+
+  it('favouriting a built-in report calls setter to add it', async () => {
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('Spending by Category')).toBeInTheDocument();
+    });
+    const stars = screen.getAllByTitle('Add to favourites');
+    fireEvent.click(stars[0]);
+    expect(mockSetFavouriteReportIds).toHaveBeenCalled();
+    // Verify the updater function adds the ID
+    const updater = mockSetFavouriteReportIds.mock.calls[0][0];
+    const result = updater([]);
+    expect(result).toContain('spending-by-category');
+  });
+
+  it('handles custom report toggleFavourite API error gracefully', async () => {
+    mockGetAllReports.mockResolvedValue([
+      {
+        id: 'cr-1',
+        name: 'My Custom Report',
+        description: 'A custom report',
+        icon: null,
+        backgroundColor: null,
+        viewType: 'TABLE',
+        timeframeType: 'LAST_30_DAYS',
+        groupBy: 'CATEGORY',
+        filters: {},
+        config: {},
+        isFavourite: false,
+        sortOrder: 0,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      },
+    ]);
+    mockToggleFavourite.mockRejectedValueOnce(new Error('Network error'));
+    render(<ReportsPage />);
+    await waitFor(() => {
+      expect(screen.getByText('My Custom Report')).toBeInTheDocument();
+    });
+    const stars = screen.getAllByTitle('Add to favourites');
+    const lastStar = stars[stars.length - 1];
+    fireEvent.click(lastStar);
+    // Should not crash - page should still render
+    await waitFor(() => {
+      expect(screen.getByText('My Custom Report')).toBeInTheDocument();
+    });
   });
 });
