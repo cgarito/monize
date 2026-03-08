@@ -4,7 +4,6 @@ import {
   MinLength,
   MaxLength,
   IsOptional,
-  Matches,
 } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 import { SanitizeHtml } from "../../common/decorators/sanitize-html.decorator";
@@ -15,17 +14,12 @@ export class RegisterDto {
   email: string;
 
   @ApiProperty({
-    example: "SecurePassword123!",
-    description:
-      "Must be 12+ chars with uppercase, lowercase, number, and special character",
+    example: "password123",
+    description: "Must be at least 6 characters long",
   })
   @IsString()
-  @MinLength(12)
+  @MinLength(6)
   @MaxLength(100)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d\s])/, {
-    message:
-      "Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character",
-  })
   password: string;
 
   @ApiProperty({ example: "John", required: false })
