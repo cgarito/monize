@@ -31,6 +31,13 @@ const PRIVATE_IP_RANGES = [
   /^::ffff:(?:127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.)/i,
 ];
 
+function getAllowedPrivateHosts(): Set<string> {
+  const raw = process.env.AI_ALLOWED_PRIVATE_HOSTS || '';
+  return new Set(
+    raw.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)
+  );
+}
+
 /**
  * Normalize an IP address string to dotted-decimal (IPv4),
  * catching hex/octal/decimal encoded IPs that bypass regex-based checks.
@@ -123,6 +130,14 @@ export class IsSafeUrlConstraint implements ValidatorConstraintInterface {
     }
 
     const hostname = parsed.hostname.toLowerCase();
+
+    // Explicitly allowlisted private hosts (via AI_ALLOWED_PRIVATE_HOSTS env var)
+    const allowedPrivateHosts = getAllowedPrivateHosts();
+    if (allowedPrivateHosts.has(hostname)) {
+      if (!parsed.username && !parsed.password) {
+        return true;
+      }
+    }
 
     if (BLOCKED_HOSTNAMES.has(hostname)) {
       return false;
