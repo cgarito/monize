@@ -1,4 +1,5 @@
 import apiClient from './api';
+import Cookies from 'js-cookie';
 import type {
   AiProviderConfig,
   CreateAiProviderConfig,
@@ -57,11 +58,8 @@ export const aiApi = {
   queryStream: (query: string, callbacks: StreamCallbacks): AbortController => {
     const controller = new AbortController();
 
-    // Get CSRF token from cookie
-    const csrfToken = document.cookie
-      .split('; ')
-      .find((row) => row.startsWith('csrf_token='))
-      ?.split('=')[1] || '';
+    // Get CSRF token from cookie (js-cookie decodes URI encoding, matching what cookie-parser sends to the backend)
+    const csrfToken = Cookies.get('csrf_token') || '';
 
     fetch('/api/v1/ai/query/stream', {
       method: 'POST',
